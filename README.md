@@ -3,7 +3,7 @@
 ## 📌 Overview
 This project analyzed and forecasted the player count of *Counter-Strike: Global Offensive (CS:GO)* using historical data from *SteamDB* 📊 and statistical modeling techniques in R 🖥️. The primary focus was to assess the impact of the release of *CS:GO 2* on the *CS:GO* player base and predict future trends.
 
-This was a group project and was done for the Forecasting Methods course.
+This was a group project and was done for the **Forecasting Methods** course.
 
 <br>
 
