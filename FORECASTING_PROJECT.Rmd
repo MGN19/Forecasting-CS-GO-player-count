@@ -1,0 +1,381 @@
+---
+title: "CS:GO Player Count"
+author:
+  - Beatriz Barreto (20211547)
+  - Mariana Ferreira (20211637)
+  - Mariana Neto (20211527)
+  - Rui Lourenço (20211639)
+output: html_document
+---
+
+<br><br>
+
+### **Imports**
+
+Importing the required libraries.
+
+```{r, warning=FALSE}
+library(tidyverse)
+library(fpp3)
+library(readr)
+library(urca)
+```
+
+<br>
+<br>
+
+### **CS:GO data**
+
+<br>
+
+#### **Data storage and interpolation**
+<br>
+Storing the CS:GO data set in a variable named 'csgo'.
+
+```{r, warning=FALSE}
+csgo <- read_csv("CSGO Lifetime Chart.csv")
+```
+<br>
+Interpolation of the missing values in the Players column by the average of the neighboring values.
+```{r, warning=FALSE}
+csgo <- csgo |> 
+  mutate(Players = timeSeries::interpNA(ts(Players), type = "mean"))
+```
+<br><br>
+
+#### **Conversion to monthly tsibble**
+
+<br>
+A monthly tsibble is created from the data and stored in 'm_csgo'.
+
+The creation of a monthly tibble from the CS:GO data set facilitates the analysis of CS:GO player counts over time, allowing efficient examination of player activity across different months.
+
+```{r, warning=FALSE}
+m_csgo <- csgo|>
+  mutate(new_date = as.Date(DateTime, format = '%d/%m/%Y'))|>
+  mutate(M=yearmonth(new_date))|>
+  group_by(M)|>
+  summarise(players_total = sum(Players)) |>
+  as_tsibble(index = M)
+```
+
+<br>
+
+Plotting the m_csgo tsibble.
+
+```{r, warning=FALSE}
+m_csgo |> 
+  autoplot() +
+  labs(x = "Month", y = "Player count")
+```
+
+<br><br>
+
+#### **Training and test data sets**
+
+<br>
+Dividing the data set into training and test for accurate forecasting purposes. 
+The training data is defined as the observations from 2012 to 2021, whereas the test data is relative to the years 2022 and 2023.
+
+```{r, warning=FALSE}
+m_csgo_training <- m_csgo |> filter(year(M) < 2022)
+m_csgo_test <- m_csgo |> filter(year(M) >= 2022)
+```
+<br>
+
+Visualizing the training data.
+
+```{r, warning=FALSE}
+m_csgo_training |> 
+  autoplot(players_total) +
+  labs(x = "Month", y = "Player count")
+```
+
+By means of the visualization of the output image, it can be observed the existence of a moderate seasonal component as well as a non-linear trend that remains relatively constant from 2015 to 2019. These two aspects will be addressed in more detail in later sections.
+
+<br><br>
+
+
+### **Variance Transformation**
+
+<br>
+To achieve accurate forecasting, it is essential to stabilize the variance, if necessary. This process involves mitigating fluctuations in data variability, which can distort patterns and hinder meaningful insights. By stabilizing the variance, we might improve the reliability, consistency, and precision of our forecasts.
+
+We used the `features()` function with the players_total (monthly tsibble column with the player count values) and guerrero parameters to determine the optimal value for the `box_cox()` transformation of the time series' level. Additionally, we compared the results of the `box_cox()` transformation to the application of a logarithmic transformation.
+
+Checking the two mentioned transformations to stabilize the variance: 
+
+
+**Box cox transformation** <br>
+Getting the Box Cox transformation parameter (lambda) chosen by Guerrero's method.
+
+```{r, warning=FALSE}
+m_csgo_training |> features(players_total, guerrero)
+```
+
+Visualizing the plot of the transformed time series' level. 
+```{r, warning=FALSE}
+m_csgo_training |> 
+  autoplot(box_cox(players_total,0.481)) +
+  labs(x = "Month", y = "Player count")
+```
+
+<br>
+**Logarithm transformation**<br>
+Visualizing the plot of the transformed time series' level. 
+
+```{r, warning=FALSE}
+m_csgo_training |> 
+  autoplot(log(players_total)) +
+  labs(x = "Month", y = "Player count")
+```
+
+Upon evaluating the transformed time series, we found that neither the Box Cox transformation nor the logarithmic transformation provided a significant improvement. Consequently, we concluded that the original time series was more suitable for analysis in this specific context, since it supplies a more accurate representation of the underlying patterns and relationships within the data.
+
+
+
+<br>
+
+
+### **Unit Root Test**
+<br>
+
+Unit root tests determine whether a time series is stationary. The most common test is the Augmented Dickey-Fuller (ADF) test. This test helps identify the need for differencing or transformations in time series analysis.
+
+Firstly, the ACF and PACF of the data are visualized to provide an initial indicator of the data' stationarity.
+
+```{r, warning=FALSE}
+m_csgo_training |> 
+  gg_tsdisplay(plot_type='partial', lag = 36, players_total) +
+  labs(y="Player Count", x = "Month")
+```
+
+The output shows the training data has an obvious trend and some seasonality. 
+These characteristics collectively indicate the presence of a non-stationary process. To rigorously assess the stationarity of 
+the data, a formal statistical inference technique, specifically a unit root test (in this case, the ADF), will be employed as a means 
+of evaluation.
+
+```{r, warning=FALSE}
+summary(ur.df(na.omit(m_csgo_training$players_total), 
+              type=c("drift"), lags=23))
+```
+
+At all conventional levels of significance (1%, 5% and 10%), the null hypothesis is not rejected, providing statistical evidence of the presence of a unit root. 
+Therefore, it can be concluded that the data is not stationary. 
+
+Hence, the data will be seasonally differentiated.
+
+```{r, warning=FALSE}
+m_csgo_training <- m_csgo_training |>
+  mutate(d_players_total = difference(players_total, 12))
+```
+
+<br>
+
+Subsequently, the ACF and PACF of the data with seasonal differences are visualized to provide an indicator of the data’ stationarity.
+
+```{r, warning=FALSE}
+m_csgo_training |>
+  gg_tsdisplay(d_players_total,
+               plot_type='partial', lag=36) +
+  labs(y="Player Count", x = "Month")
+```
+
+The output images do not clearly distinguish whether the training data has become stationary. Therefore, the time series is tested for the presence of a unit root.
+
+```{r, warning=FALSE}
+summary(ur.df(na.omit(m_csgo_training$d_players_total), type=c('drift'),
+              lags=4))
+```
+
+At all conventional levels of significance (1%, 5% and 10%), the null hypothesis is not rejected, providing statistical evidence of the presence of a unit root. Thus, it can be concluded that the data is not stationary and a non-seasonal difference will be taken.
+
+```{r, warning=FALSE}
+m_csgo_training <- m_csgo_training |>
+  mutate(d2_players_total = difference(d_players_total, 1))
+```
+
+
+As a further step, the ACF and PACF of the data with seasonal and non-seasonal differences are visualized to provide an indicator of the stationarity of the data.
+
+```{r, warning=FALSE}
+
+m_csgo_training |>
+  gg_tsdisplay(d2_players_total,
+               plot_type='partial', lag=36) +
+  labs(y="Player Count", x = "Month")
+
+```
+
+There is indication of stationarity in the data, however it is still necessary to conduct a formal test to confirm its stationarity, which is performed below. 
+
+```{r, warning=FALSE}
+summary(ur.df(na.omit(m_csgo_training$d2_players_total), type=c('drift'),
+              lags=4))
+```
+
+
+The null hypothesis is rejected at all conventional significance levels (1%, 5%, and 10%), indicating statistical evidence against the presence of a unit root. Consequently, it can be concluded that the data is stationary.
+
+<br><br>
+
+
+### **Candidate models**
+
+<br>
+Given the fact that there is no need to take further differences, the analysis 
+of the ACF and PACF of the double differences can be used to determine the 
+appropriate order for the model selection. The following models were taken into 
+consideration:
+
+```{r, warning=FALSE}
+fit <- m_csgo_training |>
+  model(
+    sarima010011 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(0, 1, 1)),
+    sarima010311 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(3, 1, 1)),
+    sarima010310 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(3, 1, 0)),
+    auto_ARIMA = ARIMA(players_total)
+  )
+```
+<br>
+Obtaining the information criteria of the models in order to facilitate model 
+comparison and selection.
+
+```{r, warning=FALSE}
+fit |>
+  glance() 
+```
+
+The values of the Akaike Information Criteria (AIC) are the same for all the selected models. Hence, looking at the values of the Bayesian Information Criteria (BIC) and considering the lower ones, the two best models are:
+1. ARIMA(0, 1, 0)(0, 1, 1)[12]
+2. ARIMA(0, 1, 0)(3, 1, 0)[12] 
+
+<br><br>
+
+### **Checking Residuals**
+
+<br>
+
+To determine whether a model is well-specified, it is necessary that the residuals have a set of characteristics, such as being normally distributed and uncorrelated.
+
+Firstly, it is visualized the time series line plot, the autocorrelation function (ACF) and the histogram of the residuals of the best sarima model within the candidates, according to the information criteria.
+
+```{r, warning=FALSE}
+fit |>
+  select(sarima010011) |>
+  gg_tsresiduals()+
+  labs(y="Residuals", x = "Month")
+```
+
+The output image displays an uncorrelated and somewhat normally distributed residuals, which are sufficiently in compliance with the requirements to consider this first model as well-speficied.
+
+<br>
+
+Subsequently, it is visualized the time series line plot, the autocorrelation function (ACF) and the histogram of the residuals of the second best sarima model within the candidates, according to the information criteria.
+
+```{r, warning=FALSE}
+fit |>
+  select(sarima010310) |>
+  gg_tsresiduals()+
+  labs(y="Residuals", x = "Month")
+```
+
+The output image displays an uncorrelated and somewhat normally distributed residuals, which are sufficiently in compliance with the requirements to consider this second model as well-speficied.
+
+<br> <br>
+
+
+### **Ljung_box test**
+
+<br>
+
+Having identified and estimated the candidate models, the next step is to formally assess model adequacy, by checking the presence of residual autocorrelation, through  the use of the Ljung-Box test. A model is considered inadequate if there is evidence of autocorrelation between residuals, i.e., if the null hypothesis is rejected.
+
+
+Firstly, the Ljung_box test is performed for the model specified as the best. 
+```{r, warning=FALSE}
+fit |>
+  select(sarima010011) |>
+  augment() |>
+  features(.innov, ljung_box, lag = 36)
+```
+
+In the output, it is observed that the p value (0.851) is quite high, and therefore,the null hypothesis is not rejected and there is not evidence of autocorrelation between residuals.
+
+<br>
+
+Subsequently, the Ljung_box test is performed for the model specified as second best. 
+```{r, warning=FALSE}
+fit |>
+  select(sarima010310) |>
+  augment() |>
+  features(.innov, ljung_box, lag = 36)
+```
+In the output, it is observed that the p value (0.771) is quite high, and therefore,the null hypothesis is not rejected and there is not evidence of autocorrelation between residuals.
+
+<br>
+For both models, the p-values obtained from the Ljung-Box test are higher than the 5% significance level. Consequently, in conjunction with the previous statements, both models can be considered quite specific. 
+
+
+<br><br>
+
+### **Forecasting accuracy**
+
+<br>
+
+To evaluate forecast accuracy reliably, forecasts should be assessed using new data that were not used during model fitting. Considering that test data is not used in determining the forecasting models, it provides a trustworthy measure of the model's forecasting performance on unseen data.
+
+Firstly, the main accuracy metrics are calculated for the previously determined best sarima model.
+```{r, warning=FALSE}
+m_csgo_training |>
+  model(sarima010011 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(0, 1, 1))) |>
+  forecast(h=12) |>
+  accuracy(m_csgo_test)
+```
+
+<br>
+
+Subsequently, the main accuracy metrics are calculated for the previously determined second best sarima model.
+```{r, warning=FALSE}
+m_csgo_training |>
+  model(sarima010310 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(3, 1, 0))) |>
+  forecast(h=12) |>
+  accuracy(m_csgo_test)
+```
+
+<br>
+According to all the considered accuracy metrics, the best model is the SARIMA(0, 1, 0)(0, 1, 1)[12]. The choice of the model is based on the lower values of the accuracy metrics.
+
+<br>
+
+To visualize the forecasts drawn against the actual data, it is used, once again, 
+the function `autoplot()`.
+
+```{r, warning=FALSE}
+m_csgo_training |>
+  model(sarima010011 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(0, 1, 1))) |>
+  forecast(h=20) |>
+  autoplot(m_csgo) +
+  labs(x = "Month", y = "Player count")
+```
+
+The output image displays how well the chosen model predicts the respective 
+observations. In this case, we consider the forecast to be sufficiently good,
+since it provides the exact structure of the actual observations, only not
+being able to anticipate the extreme decline caused by the upcoming release of CS:GO 2.
+
+<br><br>
+
+### **CS:GO player count forecast** 
+
+Lastly, we forecast the players count for the next year using the verified 
+sarima model.
+
+```{r, warning=FALSE}
+m_csgo |>
+  model(sarima010011 = ARIMA(players_total ~ 0 + pdq(0, 1, 0) + PDQ(0, 1, 1))) |>
+  forecast(h=12) |>
+  autoplot(m_csgo) +
+  labs(x = "Month", y = "Player count")
+```
+
